@@ -66,6 +66,28 @@ class AuthService {
     }
   }
 
+  private hasSupabaseAuthReady(): boolean {
+    return isSupabaseConfigured() || isDemoModeAllowed();
+  }
+
+  private createDemoConfirmation(phone: string): ConfirmationResult {
+    const normalizedPhone = phone.replace(/\D/g, '').slice(-10);
+    const demoPhone = `+91${normalizedPhone}`;
+    const confirmation: ConfirmationResult = {
+      phone: demoPhone,
+      isDemo: true,
+      confirm: async (code: string) => {
+        const user = await this.verifyOtp(confirmation, code);
+        return { user };
+      },
+    };
+
+    this.activeConfirmation = confirmation;
+    this.lastSentTimestamp = Date.now();
+    this.attemptsInWindow += 1;
+    return confirmation;
+  }
+
   constructor() {
     // Check if initial URL indicates an incoming password recovery session
     const hasInitialRecoveryParam = typeof window !== 'undefined' && (
@@ -152,7 +174,7 @@ class AuthService {
     if (this.currentDemoUser) return this.currentDemoUser;
     if (this.currentUser) return this.currentUser;
 
-    if (typeof window === 'undefined' || !isSupabaseConfigured()) {
+    if (typeof window === 'undefined' || !this.hasSupabaseAuthReady()) {
       return null;
     }
 
@@ -180,8 +202,6 @@ class AuthService {
   }
 
   private mapSupabaseUser(user: SupabaseUser): AppAuthUser {
-    // Admin is resolved by /api/me from public.admin_users. Email addresses and
-    // JWT metadata never grant it; user_metadata is client-writable.
     const role: 'customer' | 'technician' =
       user.app_metadata?.role === 'technician' || user.user_metadata?.role === 'technician'
         ? 'technician'
@@ -277,6 +297,11 @@ class AuthService {
     rawPhone: string,
     _appVerifier?: any
   ): Promise<ConfirmationResult> {
+    const normalizedPhone = rawPhone.replace(/\D/g, '').slice(-10);
+    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
+      throw new Error('Please enter a valid 10-digit Indian mobile number.');
+    }
+
     const e164Phone = this.formatToE164(rawPhone);
     const now = Date.now();
 
@@ -302,8 +327,10 @@ class AuthService {
       throw new Error('A verification request is already in progress. Please wait a moment.');
     }
 
-    // Live Supabase Auth Phone OTP Verification
     if (!isSupabaseConfigured()) {
+      if (isDemoModeAllowed()) {
+        return this.createDemoConfirmation(rawPhone);
+      }
       throw new Error(
         'SMS verification service is currently unavailable. Live Supabase credentials and an active SMS provider are required. Please try again later or contact support.'
       );
@@ -370,6 +397,28 @@ class AuthService {
     }
 
     if (!isSupabaseConfigured()) {
+      if (isDemoModeAllowed()) {
+        const demoUser: AppAuthUser = {
+          id: 'demo-auth-user',
+          uid: 'demo-auth-user',
+          phone: targetConfirmation.phone,
+          phoneNumber: targetConfirmation.phone,
+          email: 'customer.demo@clrservices.local',
+          displayName: 'Demo Customer',
+          role: 'customer',
+          isDemo: true,
+          getIdTokenResult: async () => ({ claims: { role: 'customer', isDemo: true } }),
+          getIdToken: async () => 'mock-demo-jwt',
+        };
+
+        this.activeConfirmation = null;
+        this.attemptsInWindow = 0;
+        this.currentDemoUser = demoUser;
+        this.currentUser = demoUser;
+        this.notifySubscribers(demoUser);
+        return demoUser;
+      }
+
       throw new Error(
         'SMS verification service is currently unavailable. Live Supabase credentials and an active SMS provider are required. Please try again later or contact support.'
       );
@@ -418,6 +467,7 @@ class AuthService {
     };
 
     this.currentDemoUser = demoCustomer;
+    this.currentUser = demoCustomer;
     this.notifySubscribers(demoCustomer);
     return demoCustomer;
   }
@@ -512,6 +562,7 @@ class AuthService {
     };
 
     this.currentDemoUser = demoAdmin;
+    this.currentUser = demoAdmin;
     this.notifySubscribers(demoAdmin);
 
     return {
@@ -601,7 +652,6 @@ class AuthService {
       : window.location.hash;
     const hashParams = new URLSearchParams(hashString);
 
-    // 1. Check for errors passed by Supabase Auth (e.g., otp_expired or access_denied)
     const errorParam = searchParams.get('error') || hashParams.get('error');
     const errorCode = searchParams.get('error_code') || hashParams.get('error_code');
     const errorDesc = searchParams.get('error_description') || hashParams.get('error_description');
@@ -617,7 +667,6 @@ class AuthService {
       return { isRecovery: true, error: friendlyError };
     }
 
-    // 2. Check for PKCE Authorization Code: ?code=...
     const code = searchParams.get('code');
     if (code) {
       this.isPasswordRecoveryActive = true;
@@ -628,7 +677,6 @@ class AuthService {
         return { isRecovery: false, error: 'Supabase credentials not configured.' };
       }
 
-      // Pre-check: if detectSessionInUrl already successfully recovered the session, avoid redundant exchange error
       try {
         const { data: earlySession } = await supabase.auth.getSession();
         if (earlySession?.session?.user) {
@@ -638,10 +686,8 @@ class AuthService {
           return { isRecovery: true, error: null };
         }
       } catch {
-        // Continue to explicit exchange attempt
       }
 
-      // Brief yield to allow in-flight detectSessionInUrl exchange to complete
       await new Promise((resolve) => setTimeout(resolve, 150));
       try {
         const { data: retrySession } = await supabase.auth.getSession();
@@ -656,7 +702,6 @@ class AuthService {
       try {
         const { data, error } = await supabase.auth.exchangeCodeForSession(code);
         if (error) {
-          // If code was already exchanged by detectSessionInUrl, check if session is active
           const { data: sessionData } = await supabase.auth.getSession();
           if (sessionData?.session?.user) {
             this.isPasswordRecoveryActive = true;
@@ -679,7 +724,6 @@ class AuthService {
           return { isRecovery: true, error: null };
         }
       } catch (err: unknown) {
-        // Fallback check before surfacing error
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData?.session?.user) {
           this.isPasswordRecoveryActive = true;
@@ -691,7 +735,6 @@ class AuthService {
       }
     }
 
-    // 3. Check for implicit recovery flow in hash or search
     const type = hashParams.get('type') || searchParams.get('type');
     if (type === 'recovery') {
       this.isPasswordRecoveryActive = true;
@@ -700,7 +743,6 @@ class AuthService {
       return { isRecovery: true, error: null };
     }
 
-    // 4. Check if auth listener or storage already flagged recovery active
     if (this.isPasswordRecoveryActive || this.isRecoverySession()) {
       return { isRecovery: true, error: null };
     }
@@ -766,7 +808,6 @@ class AuthService {
     try { sessionStorage.removeItem('lh_password_recovery_active'); } catch {}
     this.notifyRecoverySubscribers(false);
 
-    // Clean up recovery tokens from URL
     if (typeof window !== 'undefined') {
       const cleanPath = role === 'admin' ? '/admin' : role === 'technician' ? '/technician' : '/login';
       window.history.replaceState({}, document.title, cleanPath);
@@ -801,7 +842,6 @@ class AuthService {
       throw new Error('Supabase credentials not configured. Cannot update password.');
     }
 
-    // Verify recovery or active session exists
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !sessionData?.session?.user) {
       throw new Error('No active recovery session found. Please open the password reset link from your email again.');
@@ -816,7 +856,6 @@ class AuthService {
       throw new Error('403 Forbidden: Access denied. This account does not possess administrator privileges.');
     }
 
-    // Execute genuine password update in Supabase Auth
     const { data, error } = await supabase.auth.updateUser({
       password: cleanPassword,
     });
@@ -829,18 +868,15 @@ class AuthService {
       throw new Error('Supabase did not return updated user record. Please try again.');
     }
 
-    // Successfully updated!
     this.isPasswordRecoveryActive = false;
     try { sessionStorage.removeItem('lh_password_recovery_active'); } catch {}
     this.notifyRecoverySubscribers(false);
 
-    // Clean up URL parameters (remove code, hash tokens) so browser reload doesn't trigger recovery again
     if (typeof window !== 'undefined') {
       const cleanUrl = window.location.pathname.includes('/admin') ? '/admin' : window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
     }
 
-    // Sign out to enforce fresh login with the new password
     try {
       await supabase.auth.signOut();
     } catch (e) {
@@ -868,10 +904,8 @@ class AuthService {
       throw new Error('Please enter the 6-digit verification code sent to your mobile.');
     }
 
-    // 1. Verify SMS OTP via Supabase Auth (or demo isolation)
     const verifiedUser = await this.verifyOtp(confirmation, otpCode);
 
-    // 2. If an optional password or optional email was provided and Supabase is configured, update user credentials
     if (isSupabaseConfigured() && !verifiedUser.isDemo) {
       const updatePayload: { password?: string; email?: string; data?: Record<string, any> } = {
         data: { role: 'technician' },
@@ -924,10 +958,7 @@ class AuthService {
       throw new Error(error?.message || 'Failed to register technician credentials.');
     }
 
-    // In Supabase GoTrue, when an email is already registered, signUp returns a user with empty identities.
-    // Prevent using an uncommitted/existing user reference for profile creation.
     if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-      // Attempt to establish session with the existing account using provided password
       const { data: existingSignIn, error: existingErr } = await supabase.auth.signInWithPassword({
         email: trimmedEmail,
         password,
@@ -940,7 +971,6 @@ class AuthService {
       return this.mapSupabaseUser(existingSignIn.user);
     }
 
-    // For new signups, ensure active authenticated session is established before profile insertion
     if (!data.session) {
       const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
         email: trimmedEmail,
@@ -951,7 +981,6 @@ class AuthService {
         if (signInErr?.message?.toLowerCase().includes('email not confirmed')) {
           throw new Error('Account created! A confirmation email has been dispatched. Please confirm your email address before partner profile registration.');
         }
-        // Fallback session check
         const { data: curSession } = await supabase.auth.getSession();
         if (!curSession?.session?.user) {
           throw new Error('Registration completed but an active authentication session could not be established. Please log in directly.');
@@ -1030,6 +1059,7 @@ class AuthService {
     };
 
     this.currentDemoUser = demoTech;
+    this.currentUser = demoTech;
     this.notifySubscribers(demoTech);
     return demoTech;
   }
@@ -1212,6 +1242,9 @@ class AuthService {
     if (this.currentDemoUser) {
       return 'mock-demo-jwt-token';
     }
+    if (!this.hasSupabaseAuthReady()) {
+      return null;
+    }
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token || null;
   }
@@ -1224,7 +1257,7 @@ class AuthService {
     const existing = this.getCurrentUser();
     if (existing) {
       callback(existing);
-    } else {
+    } else if (this.hasSupabaseAuthReady()) {
       this.restoreSession().catch(() => {});
     }
 
