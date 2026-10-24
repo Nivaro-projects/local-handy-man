@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { isDemoModeAllowed, isSupabaseConfigured, supabase } from './supabase';
 
 export interface BffRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -26,12 +26,16 @@ interface BffErrorBody {
 }
 
 /**
- * Calls the same-origin BFF. The Supabase access token is attached here and
- * nowhere else, so the service_role key never reaches the browser.
- */
+  * Calls the same-origin BFF. The Supabase access token is attached here and
+  * nowhere else, so the service_role key never reaches the browser.
+  */
 export async function bffFetch<T>(path: string, options: BffRequestOptions = {}): Promise<T> {
   if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\')) {
     throw new Error('BFF path must be a relative path beginning with "/".');
+  }
+
+  if (!isSupabaseConfigured() && !isDemoModeAllowed()) {
+    throw new Error('Authentication service is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -69,5 +73,20 @@ export async function bffFetch<T>(path: string, options: BffRequestOptions = {})
     return undefined as T;
   }
 
-  return await response.json() as T;
+  const contentType = response.headers.get('Content-Type') || '';
+  const text = await response.text();
+
+  if (!text) {
+    return undefined as T;
+  }
+
+  if (contentType.includes('application/json') || contentType.includes('+json')) {
+    return JSON.parse(text) as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
 }

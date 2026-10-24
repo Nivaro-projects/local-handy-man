@@ -8,9 +8,9 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
  */
 export const isSupabaseConfigured = (): boolean => {
   return Boolean(
-    supabaseUrl && 
-    supabaseAnonKey && 
-    supabaseUrl.startsWith('http') && 
+    supabaseUrl &&
+    supabaseAnonKey &&
+    supabaseUrl.startsWith('http') &&
     !supabaseUrl.includes('your-project-ref') &&
     supabaseAnonKey.length > 20
   );
@@ -18,7 +18,7 @@ export const isSupabaseConfigured = (): boolean => {
 
 /**
  * Evaluates whether Demo Mode is permitted.
- * 
+ *
  * STRICT SECURITY CONSTRAINTS:
  * 1. Must NEVER be permitted in production builds (import.meta.env.PROD).
  * 2. Must be running on localhost/127.0.0.1.
@@ -62,8 +62,8 @@ export const getSupabaseConfigStatus = () => {
 
 /**
  * Shared Supabase Client instance.
- * Uses real credentials when configured, or a fallback client that returns explicit errors
- * instead of crashing the React tree on import.
+ * Uses real credentials when configured, or a placeholder client that keeps the app
+ * from crashing on import while still surfacing misconfiguration clearly.
  */
 export const supabase: SupabaseClient = isSupabaseConfigured()
   ? createClient(supabaseUrl!, supabaseAnonKey!, {

@@ -42,13 +42,42 @@ class CustomerService {
   private currentCustomerId: string | null = null;
   private listeners: Set<CustomerChangeListener> = new Set();
 
+  private ensureCustomerSessionMatchesAuth(): boolean {
+    const authUser = authService.getCurrentUser();
+    if (!authUser) {
+      if (this.currentCustomerId) {
+        this.currentCustomerId = null;
+        this.saveToStorage();
+      }
+      return false;
+    }
+
+    if (this.currentCustomerId && this.currentCustomerId !== authUser.uid) {
+      this.currentCustomerId = null;
+      this.saveToStorage();
+      return false;
+    }
+
+    return true;
+  }
+
   constructor() {
     this.loadFromStorage();
-    // Listen to Supabase Auth state changes to keep customer session cryptographically synchronized
+    this.ensureCustomerSessionMatchesAuth();
+
     authService.subscribe((authUser) => {
-      if (authUser) {
-        this.handleAuthenticatedSession(authUser.uid, authUser.phoneNumber || undefined);
+      if (!authUser) {
+        this.currentCustomerId = null;
+        this.notifyListeners();
+        return;
       }
+
+      this.handleAuthenticatedSession(
+        authUser.uid,
+        authUser.phoneNumber || undefined,
+        authUser.displayName || undefined,
+        authUser.email || undefined
+      );
     });
   }
 
@@ -57,6 +86,11 @@ class CustomerService {
       const data = getStorageItem(STORAGE_KEY);
       this.customers = data ? JSON.parse(data) : [];
       this.currentCustomerId = getStorageItem(CURRENT_CUSTOMER_KEY);
+
+      const authUser = authService.getCurrentUser();
+      if (authUser && this.currentCustomerId && this.currentCustomerId !== authUser.uid) {
+        this.currentCustomerId = null;
+      }
     } catch (e) {
       console.warn('Error reading customers from storage:', e);
       this.customers = [];
@@ -106,6 +140,10 @@ class CustomerService {
    * Returns current authenticated customer profile strictly verifying active auth
    */
   public getCurrentCustomer(): CustomerProfile | null {
+    if (!this.ensureCustomerSessionMatchesAuth()) {
+      return null;
+    }
+
     if (!this.currentCustomerId) return null;
     return this.customers.find((c) => c.id === this.currentCustomerId) || null;
   }
@@ -118,9 +156,16 @@ class CustomerService {
     if (!requesterUid) {
       throw new Error('401 Unauthorized: Authentication required to access customer profile.');
     }
+
+    const activeUser = authService.getCurrentUser();
+    if (activeUser && activeUser.uid !== requesterUid) {
+      throw new Error('403 Forbidden: Access denied. Cannot access profile belonging to another customer.');
+    }
+
     if (requesterUid !== targetCustomerId) {
       throw new Error('403 Forbidden: Access denied. Cannot access profile belonging to another customer.');
     }
+
     const profile = this.customers.find((c) => c.id === targetCustomerId);
     if (!profile) {
       throw new Error('404 Not Found: Customer profile not found.');
@@ -146,7 +191,6 @@ class CustomerService {
 
     if (existingIndex !== -1) {
       const existing = this.customers[existingIndex];
-      // Keep existing displayId or generate sequential displayId
       const stableDisplayId = existing.displayId || `CUS-${String(this.customers.length).padStart(5, '0')}`;
       const updated: CustomerProfile = {
         ...existing,
@@ -163,10 +207,9 @@ class CustomerService {
       return updated;
     }
 
-    // Allocate stable sequential 5-digit display ID
     const initialDisplayId = `CUS-${String(this.customers.length + 1).padStart(5, '0')}`;
     const newCustomer: CustomerProfile = {
-      id: uid, // Stable Provider UUID
+      id: uid,
       displayId: initialDisplayId,
       fullName: (fullName || '').trim() || (uid.includes('demo') ? 'Chirala Resident (Demo Sandbox)' : 'Chirala Resident'),
       phoneNumber: cleanPhone || '9491242781',
@@ -180,7 +223,6 @@ class CustomerService {
     this.currentCustomerId = uid;
     this.notifyListeners();
 
-    // Query or synchronize display_id from Supabase customers table if configured
     if (typeof window !== 'undefined' && isSupabaseConfigured() && !uid.includes('demo')) {
       (async () => {
         try {
@@ -197,7 +239,7 @@ class CustomerService {
               this.notifyListeners();
             }
           } else if (!error && !data) {
-            const { data: insData } = await supabase
+            const { data: insData, error: insertError } = await supabase
               .from('customers')
               .insert({
                 id: uid,
@@ -208,6 +250,11 @@ class CustomerService {
               .select('display_id')
               .single();
 
+            if (insertError) {
+              console.warn('Customer profile sync insert failed:', insertError.message);
+              return;
+            }
+
             if (insData?.display_id) {
               const idx = this.customers.findIndex((c) => c.id === uid);
               if (idx !== -1) {
@@ -216,8 +263,8 @@ class CustomerService {
               }
             }
           }
-        } catch {
-          // Non-blocking sync error
+        } catch (syncError) {
+          console.warn('Customer profile sync failed:', syncError);
         }
       })();
     }
