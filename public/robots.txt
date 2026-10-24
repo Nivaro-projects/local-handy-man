@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /app
+Disallow: /tech
+Disallow: /technician
+Disallow: /customer
+Disallow: /login
+Disallow: /reset-password
+
+Sitemap: https://nivaro.in/sitemap.xml

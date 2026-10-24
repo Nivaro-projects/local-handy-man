@@ -1,0 +1,563 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Application: Local Handyman (CLR Services) - Chirala, Andhra Pradesh
+// Description: Multi-role service platform for local electrical and plumbing repairs.
+//
+// 1. Collection: customers/{customerId}
+//    Document ID: Firebase Auth UID of the customer
+//    Fields:
+//      - id: string (optional, 1..64 chars, matches customerId)
+//      - fullName: string (required, 1..100 chars)
+//      - phoneNumber: string (required, 10..15 chars, phone regex)
+//      - email: string (optional, 5..100 chars, valid email format)
+//      - address: string (optional, 1..300 chars)
+//      - neighborhood: string (optional, one of Chirala neighborhoods)
+//      - authProvider: string (optional, 1..50 chars)
+//      - createdAt: timestamp / ISO string (required, immutable)
+//      - updatedAt: timestamp / ISO string (optional)
+//
+// 2. Collection: technicians/{technicianId}
+//    Document ID: Firebase Auth UID of the technician
+//    Fields:
+//      - id: string (optional, 1..64 chars, matches technicianId)
+//      - fullName: string (required, 1..100 chars)
+//      - phoneNumber: string (required, 10..15 chars)
+//      - email: string (optional, 5..100 chars)
+//      - serviceCategory: string (required, 'Electrical Repairs' | 'Plumbing Repairs')
+//      - neighborhood: string (required, Chirala neighborhood)
+//      - status: string (required, 'Pending Approval' | 'Approved' | 'Rejected', immutable for technician)
+//      - availability: string (required, 'Available' | 'Offline')
+//      - registeredAt: timestamp / ISO string (required, immutable)
+//      - approvedAt: timestamp / ISO string (optional, admin-managed)
+//      - rejectedReason: string (optional, 1..500 chars, admin-managed)
+//      - rating: number (optional, 0..5)
+//      - completedJobsCount: int (optional, >= 0)
+//
+// 3. Collection: bookings/{bookingId}
+//    Document ID: Unique Booking ID (e.g., LH-2026-XXXX or auto-ID)
+//    Fields:
+//      - id: string (optional, 1..64 chars)
+//      - customerId: string (required, immutable, customer Auth UID)
+//      - fullName: string (required, 1..100 chars)
+//      - phoneNumber: string (required, 10..15 chars)
+//      - serviceCategory: string (required, 'Electrical Repairs' | 'Plumbing Repairs')
+//      - neighborhood: string (required, Chirala neighborhood)
+//      - address: string (required, 5..300 chars)
+//      - description: string (required, 5..1000 chars)
+//      - preferredDate: string (required, 8..20 chars)
+//      - timeSlot: string (required, Morning | Afternoon | Evening slot)
+//      - status: string (required, 'New' | 'Contacted' | 'Assigned' | 'Accepted' | 'In Progress' | 'Completed' | 'Cancelled')
+//      - createdAt: timestamp / ISO string (required, immutable)
+//      - serviceRating: number (optional, 1..5, customer editable only when Completed)
+//      - serviceFeedback: string (optional, 1..500 chars, customer editable only when Completed)
+//      - assignedTechnicianId: string (optional, 1..64 chars, admin managed)
+//      - assignedTechnicianName: string (optional, 1..100 chars)
+//      - assignedTechnicianPhone: string (optional, 10..15 chars)
+//      - assignedAt: timestamp / ISO string (optional)
+//      - acceptedAt: timestamp / ISO string (optional)
+//      - startedAt: timestamp / ISO string (optional)
+//      - completedAt: timestamp / ISO string (optional)
+//      - finalBillAmount: number (optional, 0..500000, technician/admin managed)
+//      - unableToAttendReason: string (optional, 1..500 chars)
+//      - statusHistory: list of maps (optional, max 25 items)
+//
+// 4. Collection: support_tickets/{ticketId}
+//    Document ID: Unique Ticket ID (e.g., TKT-2026-XXXX or auto-ID)
+//    Fields:
+//      - id: string (optional, 1..64 chars)
+//      - bookingId: string (required, 1..64 chars)
+//      - customerId: string (required, immutable, customer Auth UID)
+//      - customerName: string (required, 1..100 chars)
+//      - customerPhone: string (required, 10..15 chars)
+//      - issueType: string (required, 'Work Quality' | 'Delayed Arrival' | 'Billing Dispute' | 'Technician Behavior' | 'Incomplete Work' | 'Other')
+//      - description: string (required, 5..1000 chars)
+//      - status: string (required, 'Open' | 'In Review' | 'Resolved')
+//      - createdAt: timestamp / ISO string (required, immutable)
+//      - resolutionNote: string (optional, 1..1000 chars, admin managed)
+//      - resolvedAt: timestamp / ISO string (optional, admin managed)
+//
+// 5. Collection: invoices/{invoiceId}
+//    Document ID: Unique Invoice ID
+//    Fields:
+//      - id: string (optional, 1..64 chars)
+//      - invoiceNumber: string (optional, 1..64 chars)
+//      - bookingId: string (required, 1..64 chars)
+//      - customerId: string (required, customer Auth UID, strictly private to customer & admin)
+//      - customerName: string (optional, 1..100 chars)
+//      - technicianId: string (optional, 1..64 chars)
+//      - technicianName: string (optional, 1..100 chars)
+//      - serviceCategory: string (optional, 'Electrical Repairs' | 'Plumbing Repairs')
+//      - neighborhood: string (optional, Chirala neighborhood)
+//      - amount: number (required, > 0 and <= 500000)
+//      - platformFee: number (optional, >= 0 and <= 50000)
+//      - tax: number (optional, >= 0 and <= 50000)
+//      - totalAmount: number (optional, > 0 and <= 600000)
+//      - status: string (optional, 'Pending' | 'Paid' | 'Failed' | 'Refunded')
+//      - paymentStatus: string (optional, 'Pending' | 'Paid' | 'Failed' | 'Refunded')
+//      - paymentMethod: string (optional, 'Cash' | 'UPI' | 'Card' | 'NetBanking')
+//      - transactionId: string (optional, 1..100 chars)
+//      - createdAt: timestamp / ISO string (optional, immutable)
+//      - paidAt: timestamp / ISO string (optional)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Global Helper Functions
+    // ===============================================================
+
+    // Check if request is from an authenticated user
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if request user matches specified UID
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if request user possesses administrative privileges
+    // Admin identity derived strictly from verified custom claims or approved bootstrap emails
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          request.auth.token.get('admin', false) == true ||
+          request.auth.token.get('role', '') == 'admin' ||
+          (
+            request.auth.token.email_verified == true &&
+            request.auth.token.email in [
+              'sarmakoniki2010@gmail.com',
+              'admin@clrservices.in',
+              'clrsarma.chirala@gmail.com',
+              'admin@chiralahandyman.com'
+            ]
+          )
+        );
+    }
+
+    // Common value validations
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 5 && email.size() <= 100 &&
+        email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    function isValidPhoneNumber(phone) {
+      return phone is string &&
+        phone.size() >= 10 && phone.size() <= 15 &&
+        phone.matches('^(\\+?[0-9]{10,14})$');
+    }
+
+    function isValidNeighborhood(name) {
+      return name in [
+        'Paparajuthota',
+        'Perala',
+        'Kothapeta',
+        'Srinivas Colony'
+      ];
+    }
+
+    function isValidServiceCategory(category) {
+      return category in [
+        'Electrical Repairs',
+        'Plumbing Repairs'
+      ];
+    }
+
+    function isValidTimeSlot(slot) {
+      return slot in [
+        'Morning (8:00 AM – 12:00 PM)',
+        'Afternoon (12:00 PM – 4:00 PM)',
+        'Evening (4:00 PM – 7:30 PM)',
+        'Morning (8:00 AM - 12:00 PM)',
+        'Afternoon (12:00 PM - 4:00 PM)',
+        'Evening (4:00 PM - 7:30 PM)'
+      ];
+    }
+
+    function isValidTimestampOrIso(val) {
+      return (val is timestamp) ||
+        (val is string && val.size() <= 40 && val.matches('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*'));
+    }
+
+    // ===============================================================
+    // Domain Validator: Customers
+    // ===============================================================
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['fullName', 'phoneNumber', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'fullName', 'phoneNumber', 'email', 'address', 'neighborhood', 'authProvider', 'createdAt', 'updatedAt']) &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+        isValidPhoneNumber(data.phoneNumber) &&
+        isValidTimestampOrIso(data.createdAt) &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 64)) &&
+        (!('email' in data) || isValidEmail(data.email)) &&
+        (!('address' in data) || (data.address is string && data.address.size() <= 300)) &&
+        (!('neighborhood' in data) || isValidNeighborhood(data.neighborhood)) &&
+        (!('authProvider' in data) || (data.authProvider is string && data.authProvider.size() <= 50)) &&
+        (!('updatedAt' in data) || isValidTimestampOrIso(data.updatedAt));
+    }
+
+    // ===============================================================
+    // Domain Validator: Technicians
+    // ===============================================================
+
+    function isValidTechnician(data) {
+      return data.keys().hasAll(['fullName', 'phoneNumber', 'serviceCategory', 'neighborhood', 'status', 'availability', 'registeredAt']) &&
+        data.keys().hasOnly(['id', 'fullName', 'phoneNumber', 'email', 'serviceCategory', 'neighborhood', 'status', 'availability', 'registeredAt', 'approvedAt', 'rejectedReason', 'rating', 'completedJobsCount']) &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+        isValidPhoneNumber(data.phoneNumber) &&
+        isValidServiceCategory(data.serviceCategory) &&
+        isValidNeighborhood(data.neighborhood) &&
+        data.status in ['Pending Approval', 'Approved', 'Rejected'] &&
+        data.availability in ['Available', 'Offline'] &&
+        isValidTimestampOrIso(data.registeredAt) &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 64)) &&
+        (!('email' in data) || isValidEmail(data.email)) &&
+        (!('approvedAt' in data) || isValidTimestampOrIso(data.approvedAt)) &&
+        (!('rejectedReason' in data) || (data.rejectedReason is string && data.rejectedReason.size() <= 500)) &&
+        (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5)) &&
+        (!('completedJobsCount' in data) || (data.completedJobsCount is int && data.completedJobsCount >= 0));
+    }
+
+    // ===============================================================
+    // Domain Validator: Bookings
+    // ===============================================================
+
+    function isValidBooking(data) {
+      return data.keys().hasAll([
+          'customerId', 'fullName', 'phoneNumber', 'serviceCategory',
+          'neighborhood', 'address', 'description', 'preferredDate',
+          'timeSlot', 'status', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'customerId', 'fullName', 'phoneNumber', 'serviceCategory',
+          'neighborhood', 'address', 'description', 'preferredDate',
+          'timeSlot', 'serviceRating', 'serviceFeedback', 'status',
+          'createdAt', 'assignedTechnicianId', 'assignedTechnicianName',
+          'assignedTechnicianPhone', 'assignedAt', 'acceptedAt', 'startedAt',
+          'completedAt', 'finalBillAmount', 'unableToAttendReason', 'statusHistory'
+        ]) &&
+        data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 64 &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+        isValidPhoneNumber(data.phoneNumber) &&
+        isValidServiceCategory(data.serviceCategory) &&
+        isValidNeighborhood(data.neighborhood) &&
+        data.address is string && data.address.size() >= 5 && data.address.size() <= 300 &&
+        data.description is string && data.description.size() >= 5 && data.description.size() <= 1000 &&
+        data.preferredDate is string && data.preferredDate.size() >= 8 && data.preferredDate.size() <= 20 &&
+        isValidTimeSlot(data.timeSlot) &&
+        data.status in ['New', 'Contacted', 'Assigned', 'Accepted', 'In Progress', 'Completed', 'Cancelled'] &&
+        isValidTimestampOrIso(data.createdAt) &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 64)) &&
+        (!('serviceRating' in data) || (data.serviceRating is number && data.serviceRating >= 1 && data.serviceRating <= 5)) &&
+        (!('serviceFeedback' in data) || (data.serviceFeedback is string && data.serviceFeedback.size() <= 500)) &&
+        (!('assignedTechnicianId' in data) || (data.assignedTechnicianId is string && data.assignedTechnicianId.size() <= 64)) &&
+        (!('assignedTechnicianName' in data) || (data.assignedTechnicianName is string && data.assignedTechnicianName.size() <= 100)) &&
+        (!('assignedTechnicianPhone' in data) || isValidPhoneNumber(data.assignedTechnicianPhone)) &&
+        (!('assignedAt' in data) || isValidTimestampOrIso(data.assignedAt)) &&
+        (!('acceptedAt' in data) || isValidTimestampOrIso(data.acceptedAt)) &&
+        (!('startedAt' in data) || isValidTimestampOrIso(data.startedAt)) &&
+        (!('completedAt' in data) || isValidTimestampOrIso(data.completedAt)) &&
+        (!('finalBillAmount' in data) || (data.finalBillAmount is number && data.finalBillAmount >= 0 && data.finalBillAmount <= 500000)) &&
+        (!('unableToAttendReason' in data) || (data.unableToAttendReason is string && data.unableToAttendReason.size() <= 500)) &&
+        (!('statusHistory' in data) || (data.statusHistory is list && data.statusHistory.size() <= 25));
+    }
+
+    // ===============================================================
+    // Domain Validator: Support Tickets
+    // ===============================================================
+
+    function isValidSupportTicket(data) {
+      return data.keys().hasAll([
+          'bookingId', 'customerId', 'customerName', 'customerPhone',
+          'issueType', 'description', 'status'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'bookingId', 'customerId', 'customerName', 'customerPhone',
+          'issueType', 'description', 'createdAt', 'status',
+          'resolutionNote', 'resolvedAt'
+        ]) &&
+        data.bookingId is string && data.bookingId.size() >= 1 && data.bookingId.size() <= 64 &&
+        data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 64 &&
+        data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 100 &&
+        isValidPhoneNumber(data.customerPhone) &&
+        data.issueType in ['Work Quality', 'Delayed Arrival', 'Billing Dispute', 'Technician Behavior', 'Incomplete Work', 'Other'] &&
+        data.description is string && data.description.size() >= 5 && data.description.size() <= 1000 &&
+        (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt)) &&
+        data.status in ['Open', 'In Review', 'Resolved'] &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 64)) &&
+        (!('resolutionNote' in data) || (data.resolutionNote is string && data.resolutionNote.size() <= 1000)) &&
+        (!('resolvedAt' in data) || isValidTimestampOrIso(data.resolvedAt));
+    }
+
+    // ===============================================================
+    // Domain Validator: Invoices
+    // ===============================================================
+
+    function isValidInvoice(data) {
+      return data.keys().hasAll(['bookingId', 'customerId', 'amount']) &&
+        data.keys().hasOnly([
+          'id', 'invoiceNumber', 'bookingId', 'customerId', 'customerName',
+          'technicianId', 'technicianName', 'serviceCategory', 'neighborhood',
+          'amount', 'platformFee', 'tax', 'totalAmount', 'status', 'paymentStatus',
+          'paymentMethod', 'transactionId', 'createdAt', 'paidAt'
+        ]) &&
+        data.bookingId is string && data.bookingId.size() >= 1 && data.bookingId.size() <= 64 &&
+        data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 64 &&
+        data.amount is number && data.amount > 0 && data.amount <= 500000 &&
+        (!('id' in data) || (data.id is string && data.id.size() <= 64)) &&
+        (!('invoiceNumber' in data) || (data.invoiceNumber is string && data.invoiceNumber.size() <= 64)) &&
+        (!('customerName' in data) || (data.customerName is string && data.customerName.size() <= 100)) &&
+        (!('technicianId' in data) || (data.technicianId is string && data.technicianId.size() <= 64)) &&
+        (!('technicianName' in data) || (data.technicianName is string && data.technicianName.size() <= 100)) &&
+        (!('serviceCategory' in data) || isValidServiceCategory(data.serviceCategory)) &&
+        (!('neighborhood' in data) || isValidNeighborhood(data.neighborhood)) &&
+        (!('platformFee' in data) || (data.platformFee is number && data.platformFee >= 0 && data.platformFee <= 50000)) &&
+        (!('tax' in data) || (data.tax is number && data.tax >= 0 && data.tax <= 50000)) &&
+        (!('totalAmount' in data) || (data.totalAmount is number && data.totalAmount > 0 && data.totalAmount <= 600000)) &&
+        (!('status' in data) || (data.status in ['Pending', 'Paid', 'Failed', 'Refunded'])) &&
+        (!('paymentStatus' in data) || (data.paymentStatus in ['Pending', 'Paid', 'Failed', 'Refunded'])) &&
+        (('status' in data) || ('paymentStatus' in data)) &&
+        (!('paymentMethod' in data) || (data.paymentMethod in ['Cash', 'UPI', 'Card', 'NetBanking'])) &&
+        (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() <= 100)) &&
+        (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt)) &&
+        (!('paidAt' in data) || isValidTimestampOrIso(data.paidAt));
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // 1. Customers Collection
+    // Customer profile records containing PII (phone number, address).
+    match /customers/{customerId} {
+      // Strictly owner or admin can read
+      allow read: if isOwner(customerId) || isAdmin();
+
+      // Customer can create their own profile document
+      allow create: if isOwner(customerId) &&
+                       isValidCustomer(request.resource.data);
+
+      // Customer can update profile, but cannot tamper with customerId or original creation time
+      allow update: if (
+                        isOwner(customerId) &&
+                        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdAt', 'id']) &&
+                        isValidCustomer(request.resource.data)
+                      ) || (
+                        isAdmin() &&
+                        isValidCustomer(request.resource.data)
+                      );
+
+      // Hard deletion is reserved exclusively for admin
+      allow delete: if isAdmin();
+    }
+
+    // 2. Technicians Collection
+    // Professional profiles, service categories, and platform approval statuses.
+    match /technicians/{technicianId} {
+      // Technician reads their own profile; admins can inspect all
+      allow read: if isOwner(technicianId) || isAdmin();
+
+      // Technician can self-register with 'Pending Approval' status; Admin can create directly
+      allow create: if (
+                        isOwner(technicianId) &&
+                        request.resource.data.status == 'Pending Approval' &&
+                        !('approvedAt' in request.resource.data) &&
+                        !('rejectedReason' in request.resource.data) &&
+                        isValidTechnician(request.resource.data)
+                      ) || (
+                        isAdmin() &&
+                        isValidTechnician(request.resource.data)
+                      );
+
+      // Technician can update availability/contact; status approval is strictly admin-controlled
+      allow update: if (
+                        isOwner(technicianId) &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'availability', 'neighborhood', 'phoneNumber', 'email'
+                        ]) &&
+                        request.resource.data.status == resource.data.status &&
+                        isValidTechnician(request.resource.data)
+                      ) || (
+                        isAdmin() &&
+                        isValidTechnician(request.resource.data)
+                      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 3. Bookings Collection
+    // Core service requests with customer contact info, technician assignments, and billing.
+    match /bookings/{bookingId} {
+      // Reads STRICTLY authorized only for customer owner, assigned technician, or admin
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        ('assignedTechnicianId' in resource.data && resource.data.assignedTechnicianId == request.auth.uid) ||
+        isAdmin()
+      );
+
+      // Authenticated customer creates a booking; must start in 'New' status without assigned tech or final bill
+      allow create: if isAuthenticated() &&
+                       request.resource.data.customerId == request.auth.uid &&
+                       request.resource.data.status == 'New' &&
+                       !('assignedTechnicianId' in request.resource.data) &&
+                       !('assignedTechnicianName' in request.resource.data) &&
+                       !('assignedTechnicianPhone' in request.resource.data) &&
+                       !('finalBillAmount' in request.resource.data) &&
+                       !('unableToAttendReason' in request.resource.data) &&
+                       isValidBooking(request.resource.data);
+
+      // Updates strictly partitioned by role:
+      allow update: if (
+        // A. Customer: can rate and leave feedback on their own COMPLETED bookings
+        (
+          isAuthenticated() &&
+          resource.data.customerId == request.auth.uid &&
+          resource.data.status == 'Completed' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'serviceRating', 'serviceFeedback', 'statusHistory'
+          ]) &&
+          request.resource.data.customerId == resource.data.customerId &&
+          (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+          ('serviceRating' in request.resource.data && request.resource.data.serviceRating is number && request.resource.data.serviceRating >= 1 && request.resource.data.serviceRating <= 5) &&
+          (!('serviceFeedback' in request.resource.data) || (request.resource.data.serviceFeedback is string && request.resource.data.serviceFeedback.size() <= 500)) &&
+          isValidBooking(request.resource.data)
+        ) ||
+        // B. Assigned Technician: can update operational workflow status and final bill amount
+        (
+          isAuthenticated() &&
+          ('assignedTechnicianId' in resource.data && resource.data.assignedTechnicianId == request.auth.uid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'finalBillAmount', 'unableToAttendReason',
+            'acceptedAt', 'startedAt', 'completedAt', 'statusHistory'
+          ]) &&
+          request.resource.data.customerId == resource.data.customerId &&
+          (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+          (
+            // Controlled state transitions
+            (resource.data.status == 'Assigned' && request.resource.data.status in ['Accepted', 'Contacted']) ||
+            (resource.data.status == 'Accepted' && request.resource.data.status in ['In Progress', 'Contacted']) ||
+            (resource.data.status == 'In Progress' && request.resource.data.status == 'Completed')
+          ) &&
+          (
+            request.resource.data.status != 'Completed' ||
+            ('finalBillAmount' in request.resource.data && request.resource.data.finalBillAmount is number && request.resource.data.finalBillAmount >= 0)
+          ) &&
+          isValidBooking(request.resource.data)
+        ) ||
+        // C. Admin: can assign technicians, reassign, adjust billing, and manage all fields
+        (
+          isAdmin() &&
+          request.resource.data.customerId == resource.data.customerId &&
+          (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+          isValidBooking(request.resource.data)
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 4. Support Tickets Collection
+    // Customer problem reports and service disputes.
+    match /support_tickets/{ticketId} {
+      // Customers read only their own tickets; admins read all
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Customer creates a ticket for their own service booking in 'Open' status
+      allow create: if isAuthenticated() &&
+                       request.resource.data.customerId == request.auth.uid &&
+                       request.resource.data.status == 'Open' &&
+                       !('resolutionNote' in request.resource.data) &&
+                       !('resolvedAt' in request.resource.data) &&
+                       isValidSupportTicket(request.resource.data);
+
+      // Admins manage ticket investigation, resolution notes, and status updates
+      allow update: if isAdmin() &&
+                       request.resource.data.customerId == resource.data.customerId &&
+                       (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+                       isValidSupportTicket(request.resource.data);
+
+      allow delete: if isAdmin();
+    }
+
+    // 5. Invoices Collection
+    // Financial and billing transaction records. STRICTLY non-writable by end-users.
+    match /invoices/{invoiceId} {
+      // Readable STRICTLY by the customer owner or admin. Never exposed to public or other users.
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Only trusted Admins or backend system can generate or update invoices
+      allow create, update: if isAdmin() &&
+                               (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+                               isValidInvoice(request.resource.data);
+
+      allow delete: if isAdmin();
+    }
+
+    // 6. Payments Collection
+    // Authentic transaction records linked to customers & bookings.
+    match /payments/{paymentId} {
+      // Customer reads only their own payment records; admin reads all
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Authenticated admin or assigned technician records payment on completion
+      allow create: if isAuthenticated() && (
+        isAdmin() ||
+        (
+          request.resource.data.technicianId == request.auth.uid &&
+          request.resource.data.status in ['Paid', 'Pending']
+        )
+      );
+
+      // Only administrators can update payments (e.g. process refunds or adjust status)
+      allow update, delete: if isAdmin();
+    }
+
+    // 7. Commissions Collection
+    // Platform marketplace commission ledger.
+    match /commissions/{commissionId} {
+      // Technicians read only their own commission ledger; admins read all
+      allow read: if isAuthenticated() && (
+        resource.data.technicianId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Only administrators manage commission calculation, collection, and settlement
+      allow write: if isAdmin();
+    }
+
+    // 8. Commission Settings Collection
+    // Configurable marketplace commission policy (percentage vs fixed fee)
+    match /commission_settings/{configId} {
+      // All authenticated users can read current platform commission policy
+      allow read: if isAuthenticated();
+
+      // Only administrators can modify marketplace commission terms
+      allow write: if isAdmin();
+    }
+
+    // ===============================================================
+    // Root Default Deny
+    // Catch-all to deny any undefined collections, paths, or actions.
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
