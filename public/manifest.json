@@ -1,0 +1,27 @@
+{
+  "name": "Nivaro",
+  "short_name": "Nivaro",
+  "description": "Nivaro connects households in Chirala with reliable electricians and plumbers for everyday home repairs. Home Services, Made Simple.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5E6CC",
+  "theme_color": "#F5E6CC",
+  "icons": [
+    {
+      "src": "/brand/nivaro-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    }
+  ]
+}

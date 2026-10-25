@@ -1,0 +1,23 @@
+# Nivaro
+
+> Nivaro is a local home-repair marketplace in Chirala, Andhra Pradesh, connecting households with approved electricians and plumbers for doorstep electrical and plumbing repairs. Every visit starts with an on-site inspection and a clear labour-and-parts quote before work begins.
+
+## Services
+
+- [Electrical repairs](https://nivaro.in/services): electrician in Chirala for switchboards, power sockets, MCB breakers, ceiling and exhaust fans, lighting, wiring faults, short-circuit troubleshooting, geyser and inverter connections.
+- [Plumbing repairs](https://nivaro.in/services): plumber in Chirala for leaking taps, mixers, showerheads, pipe joints, supply line leaks, blocked drains, sink clearance and overhead tank float valve or pump fittings.
+
+## Coverage
+
+Chirala, Bapatla district, Andhra Pradesh, India. Current dispatch neighbourhoods: Paparajuthota, Perala, Kothapeta, Srinivas Colony, Vadarevu.
+
+## Booking
+
+- [Book a service](https://nivaro.in/#booking): choose electrical or plumbing, pick a date and neighbourhood, then confirm contact details.
+- Phone: +91 94912 42781
+- Email: contact@nivaro.in
+- Standard hours: Monday to Sunday, 8:00 AM to 7:30 PM
+
+## Notes
+
+Technicians register on the platform and are reviewed and approved by the Nivaro team before taking bookings. Labour and replacement parts are quoted on site; customers settle directly with the technician after the job.

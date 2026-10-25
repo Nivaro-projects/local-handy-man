@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Official Nivaro 60-30-10 Brand Palette Tokens */
+  --color-navy: #192A56;            /* 60% Dominant Background */
+  --color-navy-deep: #101E3E;
+  --color-navy-raised: #22376B;
+  --color-navy-border: #33486F;
+  --color-navy-muted: #C9D3E8;
+  --color-navy-text: #F7F5F0;
+  --color-rose: #EDA6A3;            /* 30% Secondary Surfaces */
+  --color-rose-light: #F6C9C6;
+  --color-rose-muted: #2C3E66;
+  --color-gold: #F2B84B;            /* 10% Accent */
+  --color-gold-hover: #E3A62D;
+  --color-gold-active: #C98F1D;
+}
+
+@layer base {
+  html, body {
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #FFFFFF;
+    color: #4A4A4A;
+  }
+
+  /* Dual-tone focus ring: navy reads on white, gold halo reads on dark surfaces */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #192A56;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px #F2B84B;
+  }
+}
+
+/* Custom scrollbar subtle styling for the light surface */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #192A56;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  body {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
